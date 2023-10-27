@@ -2,10 +2,14 @@
 import copy
 from itertools import chain
 
-from xtuner.utils import IGNORE_INDEX
+from xtuner.utils import DEFAULT_IMAGE_TOKEN, IGNORE_INDEX, IMAGE_TOKEN_INDEX
 
 
-def encode_fn(example, tokenizer, max_length, input_ids_with_output=True):
+def encode_fn(example,
+              tokenizer,
+              max_length,
+              input_ids_with_output=True,
+              with_image_token=False):
     """We only support the following three scenarios:
 
     1. Incremental pretraining dataset.
@@ -56,7 +60,19 @@ def encode_fn(example, tokenizer, max_length, input_ids_with_output=True):
     input_ids, labels = [], []
     for single_turn_conversation in example['conversation']:
         input = single_turn_conversation['input']
-        input_encode = tokenizer(f'{input}', add_special_tokens=False)
+        if DEFAULT_IMAGE_TOKEN in input and with_image_token:
+            chunk_encode = [
+                tokenizer(chunk, add_special_tokens=False)
+                for chunk in input.split('<image>')
+            ]
+            assert len(chunk_encode) == 2
+            input_encode = {'input_ids': []}
+            for idx, cur_chunk_encode in enumerate(chunk_encode):
+                input_encode['input_ids'].extend(cur_chunk_encode['input_ids'])
+                if idx != len(chunk_encode) - 1:
+                    input_encode['input_ids'].append(IMAGE_TOKEN_INDEX)
+        else:
+            input_encode = tokenizer(f'{input}', add_special_tokens=False)
         input_ids += bos_token_id + input_encode['input_ids']
         labels += [IGNORE_INDEX] * (
             len(bos_token_id + input_encode['input_ids']))
