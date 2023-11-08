@@ -142,6 +142,39 @@ class RefCOCOTrainDataset(Dataset):
         return data
 
 
+class InvRefCOCOTrainDataset(RefCOCOTrainDataset):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.instruction_pool = [
+            "[identify] {}",
+            "[identify] what object is in this location {}",
+            "[identify] identify the object present at this location {}",
+            "[identify] what is it in {}",
+            "[identify] describe this object in {}",
+            "[identify] this {} is",
+            "[identify] the object in {} is",
+        ]
+
+    def __getitem__(self, index):
+        data = self.preprocess(index)
+        instruction = random.choice(
+            self.instruction_pool).format(data['bbox'])
+
+        instruction = "<Img><ImageHere></Img> {} ".format(instruction)
+
+        image = data.pop('image')
+        data = {
+            "instruction_input": instruction,
+            "answer": self.text_processor(data['refer_sentence']),
+            "image_id": data['image_id'],
+        }
+
+        data = self.prepare_hf_datasets(data)
+        data['pixel_values'] = image
+        return data
+
+
 def fake_processor(input):
     return input
 
