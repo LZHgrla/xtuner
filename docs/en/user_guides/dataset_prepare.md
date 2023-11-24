@@ -161,11 +161,12 @@ ${DATASET_ROOT}
 │       ├── instances.json
 │       ├── refs(google).p
 │       └─── refs(und).p
-├── coco_train_1024
+├── coco_images
 |    ├── *.jpg
 ...
 ```
 Download the RefCOCO, RefCOCO+, RefCOCOg annotation files using below links.
+Both of coco train 2017 and 2014 are valid for coco_images.
 
 Image source | Download path
 --- | :---:
