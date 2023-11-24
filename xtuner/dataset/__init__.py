@@ -6,7 +6,7 @@ from .llava import LLaVADataset
 from .modelscope import process_ms_dataset
 from .moss_sft import MOSSSFTDataset
 from .utils import decode_base64_to_image, expand2square, load_image
-from .refcoco import RefCOCOTrainDataset
+from .refcoco import RefCOCOTrainDataset, InvRefCOCOTrainDataset
 
 __all__ = [
     'process_hf_dataset', 'ConcatDataset', 'MOSSSFTDataset',

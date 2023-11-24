@@ -11,7 +11,6 @@ import skimage.io as io
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon, Rectangle
 from torch.utils.data import Dataset
-from xtuner.utils import DEFAULT_IMAGE_TOKEN
 from .huggingface import process_hf_dataset
 from datasets import Dataset as HFDataset
 from datasets import DatasetDict
@@ -20,17 +19,6 @@ from torchvision import transforms
 import re
 from mmengine.config import Config, ConfigDict
 from ..registry import BUILDER
-
-
-def refcoco_map_fn(data):
-    conversation = {}
-    input: str = data['instruction_input']
-    input = input.replace('<Img><ImageHere></Img> ',
-                          DEFAULT_IMAGE_TOKEN+'\n').strip()
-    conversation['input'] = input
-    conversation['output'] = data['answer']
-    conversation['system'] = ""
-    return {'conversation': [conversation]}
 
 
 class RefCOCOTrainDataset(Dataset):
@@ -178,7 +166,7 @@ class InvRefCOCOTrainDataset(RefCOCOTrainDataset):
 def fake_processor(input):
     return input
 
-# below codes are copied form minigpt4
+# below codes are copied form minigpt4: https://github.com/Vision-CAIR/MiniGPT-4
 
 
 class BaseProcessor:
