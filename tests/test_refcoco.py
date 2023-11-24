@@ -11,9 +11,11 @@ from PIL import Image
 from torch.utils.data import Dataset
 import copy
 from xtuner.dataset import RefCOCOTrainDataset, InvRefCOCOTrainDataset
+from xtuner.dataset.refcoco import Blip2ImageTrainProcessor
 from xtuner.dataset.map_fns import refcoco_map_fn
 from xtuner.registry import BUILDER
 import torch
+
 
 import logging
 
@@ -31,7 +33,9 @@ class TestRef(TestCase):
         refcoco_dataset_config['data_path'] = 'data/refcoco/refcoco_annotations'
         refcoco_dataset_config['image_folder'] = 'data/refcoco/train2014'
         refcoco_dataset_config['dataset_map_fn'] = refcoco_map_fn
-
+        refcoco_dataset_config['processor'] = dict(
+            type=Blip2ImageTrainProcessor
+        )
         refcoco_set = BUILDER.build(refcoco_dataset_config)
         item = refcoco_set[0]
         self._print(item)

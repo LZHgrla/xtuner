@@ -29,7 +29,6 @@ class RefCOCOTrainDataset(Dataset):
                  processor,
                  dataset='refcoco',
                  splitBy='unc',
-                 image_size=448,
                  max_dataset_length=None,
                  dataset_map_fn=None,
                  template_map_fn=None,
@@ -198,9 +197,8 @@ class Blip2ImageTrainProcessor(BlipImageBaseProcessor):
 
         self.transform = transforms.Compose(
             [
-                transforms.RandomResizedCrop(
-                    image_size,
-                    scale=(min_scale, max_scale),
+                transforms.Resize(
+                    (image_size, image_size),
                     interpolation=InterpolationMode.BICUBIC,
                 ),
                 transforms.ToTensor(),
@@ -208,8 +206,14 @@ class Blip2ImageTrainProcessor(BlipImageBaseProcessor):
             ]
         )
 
-    def __call__(self, item):
+    def __call__(self, item,):
         return self.transform(item)
+
+    def preprocess(self, item, **kwargs):
+        res = self.transform(item)
+        return {
+            "pixel_values": [res]
+        }
 
 
 class BlipCaptionProcessor(BaseProcessor):
