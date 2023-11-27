@@ -148,7 +148,7 @@ git clone https://huggingface.co/datasets/liuhaotian/LLaVA-Pretrain --depth=1
 
 ```
 
-${DATASET_ROOT}
+./data
 ├── refcoco_annotations
 │   ├── refcoco
 │   │   ├── instances.json
