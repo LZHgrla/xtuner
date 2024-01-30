@@ -1,9 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import math
 import warnings
 from typing import Optional, Tuple
 
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from mmengine import MessageHub
@@ -173,6 +175,193 @@ def internlm2_attn_forward(
     return attn_output, None, past_key_value
 
 
+def internlm2_mmca_attn_forward(
+    self,
+    hidden_states: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    past_key_value: Optional[Tuple[torch.Tensor]] = None,
+    output_attentions: bool = False,
+    use_cache: bool = False,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor],
+           Optional[Tuple[torch.Tensor]]]:
+    if 'padding_mask' in kwargs:
+        warnings.warn(
+            'Passing `padding_mask` is deprecated and will be removed in v4.37'
+            'Please make sure use `attention_mask` instead.`')
+
+    bsz, q_len, _ = hidden_states.size()
+
+    qkv_states = self.wqkv(hidden_states)
+
+    qkv_states = rearrange(
+        qkv_states,
+        'b q (h gs d) -> b q h gs d',
+        gs=2 + self.num_key_value_groups,
+        d=self.head_dim,
+    )
+
+    query_states = qkv_states[..., :self.num_key_value_groups, :]
+    query_states = rearrange(query_states, 'b q h gs d -> b q (h gs) d')
+    key_states = qkv_states[..., -2, :]
+    value_states = qkv_states[..., -1, :]
+
+    query_states = query_states.transpose(1, 2)
+    key_states = key_states.transpose(1, 2)
+    value_states = value_states.transpose(1, 2)
+
+    kv_seq_len = key_states.shape[-2]
+    if past_key_value is not None:
+        kv_seq_len += past_key_value[0].shape[-2]
+    cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+    query_states, key_states = apply_rotary_pos_emb(query_states, key_states,
+                                                    cos, sin, position_ids)
+
+    if past_key_value is not None:
+        # reuse k, v, self_attention
+        key_states = torch.cat([past_key_value[0], key_states], dim=2)
+        value_states = torch.cat([past_key_value[1], value_states], dim=2)
+
+    past_key_value = (key_states, value_states) if use_cache else None
+
+    key_states = repeat_kv(key_states, self.num_key_value_groups)
+    value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+    assert len(attention_mask) == 2
+    for attention_mask_one in attention_mask:
+        if attention_mask_one.size() != (bsz, 1, q_len, kv_seq_len):
+            raise ValueError('Attention mask should be of size '
+                             f'{(bsz, 1, q_len, kv_seq_len)}, '
+                             f'but is {attention_mask_one.size()}')
+
+    attention_mask_img = attention_mask[0]
+    attention_mask_text = attention_mask[1]
+
+    attn_weights = torch.matmul(query_states, key_states.transpose(
+        2, 3)) / math.sqrt(self.head_dim)
+
+    attn_weights_img = attn_weights + attention_mask_img
+    attn_weights_text = attn_weights + attention_mask_text
+
+    attn_weights_img = nn.functional.softmax(
+        attn_weights_img, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    attn_weights_text = nn.functional.softmax(
+        attn_weights_text, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    img_valid_mask = (attention_mask_img > torch.finfo(
+        attention_mask_img.dtype).min).expand(attn_weights_img.shape)
+    attn_weights_img[~img_valid_mask] = 0
+
+    attn_weights = attn_weights_img + attn_weights_text
+
+    attn_output = torch.matmul(attn_weights, value_states)
+
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+
+    attn_output = self.wo(attn_output)
+
+    # Due to the implementation of the PyTorch version of flash attention,
+    # even when the output_attentions flag is set to True, it is not possible
+    # to return the attn_weights.
+    return attn_output, None, past_key_value
+
+
+# def internlm2_mmca_attn_forward(
+#     self,
+#     hidden_states: torch.Tensor,
+#     attention_mask: Optional[torch.Tensor] = None,
+#     position_ids: Optional[torch.LongTensor] = None,
+#     past_key_value: Optional[Tuple[torch.Tensor]] = None,
+#     output_attentions: bool = False,
+#     use_cache: bool = False,
+#     **kwargs,
+# ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
+#            Optional[Tuple[torch.Tensor]]]:
+#     if 'padding_mask' in kwargs:
+#         warnings.warn(
+#             'Passing `padding_mask` is deprecated and will be removed in v4.37'
+#             'Please make sure use `attention_mask` instead.`')
+
+#     bsz, q_len, _ = hidden_states.size()
+
+#     qkv_states = self.wqkv(hidden_states)
+
+#     qkv_states = rearrange(
+#         qkv_states,
+#         'b q (h gs d) -> b q h gs d',
+#         gs=2 + self.num_key_value_groups,
+#         d=self.head_dim,
+#     )
+
+#     query_states = qkv_states[..., :self.num_key_value_groups, :]
+#     query_states = rearrange(query_states, 'b q h gs d -> b q (h gs) d')
+#     key_states = qkv_states[..., -2, :]
+#     value_states = qkv_states[..., -1, :]
+
+#     query_states = query_states.transpose(1, 2)
+#     key_states = key_states.transpose(1, 2)
+#     value_states = value_states.transpose(1, 2)
+
+#     kv_seq_len = key_states.shape[-2]
+#     if past_key_value is not None:
+#         kv_seq_len += past_key_value[0].shape[-2]
+#     cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+#     query_states, key_states = apply_rotary_pos_emb(query_states, key_states,
+#                                                     cos, sin, position_ids)
+
+#     if past_key_value is not None:
+#         # reuse k, v, self_attention
+#         key_states = torch.cat([past_key_value[0], key_states], dim=2)
+#         value_states = torch.cat([past_key_value[1], value_states], dim=2)
+
+#     past_key_value = (key_states, value_states) if use_cache else None
+
+#     key_states = repeat_kv(key_states, self.num_key_value_groups)
+#     value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+#     assert len(attention_mask) == 2
+#     for attention_mask_one in attention_mask:
+#         if attention_mask_one.size() != (bsz, 1, q_len, kv_seq_len):
+#             raise ValueError('Attention mask should be of size '
+#                              f'{(bsz, 1, q_len, kv_seq_len)}, '
+#                              f'but is {attention_mask_one.size()}')
+
+#     attention_mask_img = attention_mask[0]
+#     attention_mask_text = attention_mask[1]
+
+#     img_valid_mask = (attention_mask_img > torch.finfo(
+#         attention_mask_img.dtype).min).any(
+#             dim=-1, keepdim=True).expand(bsz, self.num_heads, q_len,
+#                                          self.head_dim)
+
+#     # use flash attention implemented by pytorch
+#     if q_len == kv_seq_len:
+#         indices = torch.arange(q_len)
+#         attention_mask_img[:, :, indices, indices] = 0
+
+#     attn_output_img = F.scaled_dot_product_attention(
+#         query_states, key_states, value_states, attn_mask=attention_mask_img)
+
+#     attn_output_text = F.scaled_dot_product_attention(
+#         query_states, key_states, value_states, attn_mask=attention_mask_text)
+
+#     attn_output = attn_output_text.clone()
+
+#     attn_output[img_valid_mask] = attn_output[
+#         img_valid_mask] + attn_output_img[img_valid_mask]
+
+#     attn_output = attn_output.transpose(1, 2).contiguous()
+#     attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+
+#     attn_output = self.wo(attn_output)
+
+#     # Due to the implementation of the PyTorch version of flash attention,
+#     # even when the output_attentions flag is set to True, it is not possible
+#     # to return the attn_weights.
+#     return attn_output, None, past_key_value
+
+
 def internlm2_varlen_attn_forward(
     self,
     hidden_states: torch.Tensor,
@@ -269,3 +458,107 @@ def internlm2_varlen_attn_forward(
     # even when the output_attentions flag is set to True, it is not possible
     # to return the attn_weights.
     return attn_output, None, past_key_value
+
+
+def _prepare_mmca_decoder_attention_mask(self, attention_mask, input_shape,
+                                         inputs_embeds,
+                                         past_key_values_length):
+    # create causal mask
+    # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+
+    def _make_causal_mask(input_ids_shape: torch.Size,
+                          dtype: torch.dtype,
+                          device: torch.device,
+                          past_key_values_length: int = 0):
+        """Make causal mask used for bi-directional self-attention."""
+        bsz, tgt_len = input_ids_shape
+        mask = torch.full((tgt_len, tgt_len),
+                          torch.tensor(torch.finfo(dtype).min, device=device),
+                          device=device)
+        mask_cond = torch.arange(mask.size(-1), device=device)
+        mask.masked_fill_(mask_cond < (mask_cond + 1).view(mask.size(-1), 1),
+                          0)
+        mask = mask.to(dtype)
+
+        if past_key_values_length > 0:
+            mask = torch.cat([
+                torch.zeros(
+                    tgt_len,
+                    past_key_values_length,
+                    dtype=dtype,
+                    device=device), mask
+            ],
+                             dim=-1)
+        return mask[None, None, :, :].expand(bsz, 1, tgt_len,
+                                             tgt_len + past_key_values_length)
+
+    def _expand_mmca_mask(mask: torch.Tensor,
+                          dtype: torch.dtype,
+                          tgt_len: Optional[int] = None):
+        bsz, src_len = mask.size()
+        tgt_len = tgt_len if tgt_len is not None else src_len
+
+        # image mask
+        mask_img = mask.clone()
+        mask_img[mask_img != 2] = 0
+        mask_img[mask_img == 2] = 1
+
+        expanded_mask_img = mask_img[:, None,
+                                     None, :].expand(bsz, 1, tgt_len,
+                                                     src_len).to(dtype)
+
+        inverted_mask_img = 1.0 - expanded_mask_img
+        inverted_mask_img = inverted_mask_img.masked_fill(
+            inverted_mask_img.to(torch.bool),
+            torch.finfo(dtype).min)
+        # text mask
+        mask_text = mask.clone()
+        mask_text[mask_text != 1] = 0
+        mask_text[mask_text == 1] = 1
+        expanded_mask_text = mask_text[:, None,
+                                       None, :].expand(bsz, 1, tgt_len,
+                                                       src_len).to(dtype)
+
+        inverted_mask_text = 1.0 - expanded_mask_text
+        inverted_mask_text = inverted_mask_text.masked_fill(
+            inverted_mask_text.to(torch.bool),
+            torch.finfo(dtype).min)
+
+        # image tokens does not attennd to image tokens
+        if tgt_len == src_len:
+            # TODO: basically, the prompt phase, need to revisit this part
+            for i in range(bsz):
+                for j in range(tgt_len):
+                    if mask[i, j] == 2:
+                        inverted_mask_img[i, :, j, :] = torch.finfo(dtype).min
+                        inverted_mask_text[i, :, j, :] = torch.finfo(dtype).min
+                        inverted_mask_text[i, :, j, j] = 0
+
+        return [inverted_mask_img, inverted_mask_text]  # return two masks
+
+    combined_attention_mask = None
+    if input_shape[-1] > 1:
+        combined_attention_mask = _make_causal_mask(
+            input_shape,
+            inputs_embeds.dtype,
+            device=inputs_embeds.device,
+            past_key_values_length=past_key_values_length,
+        )
+    if attention_mask is not None:
+        # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+        expanded_attn_mask = _expand_mmca_mask(
+            attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1])
+        # if cross attention, we have two masks, this is from _expand_mask
+        expanded_attn_mask = [
+            expanded_attn_mask[0].to(inputs_embeds.device),
+            expanded_attn_mask[1].to(inputs_embeds.device)
+        ]
+        if combined_attention_mask is None:
+            combined_attention_mask = expanded_attn_mask
+        else:
+            combined_attention_mask = (expanded_attn_mask[0] +
+                                       combined_attention_mask,
+                                       expanded_attn_mask[1] +
+                                       combined_attention_mask)
+
+    return combined_attention_mask

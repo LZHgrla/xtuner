@@ -92,27 +92,42 @@ def dispatch_internlm_attn_forward(model, use_varlen_attn):
                                                   module)
 
 
-def dispatch_internlm2_attn_forward(model, use_varlen_attn):
+def dispatch_internlm2_attn_forward(model, use_varlen_attn, use_mmca_attn):
     if use_varlen_attn:
         assert SUPPORT_FLASH2 and SUPPORT_TRITON, \
             'flash_attn and triton is required if you want to use varlen_attn.'
     elif not SUPPORT_FLASH1:
         return
 
-    from .internlm2 import (internlm2_attn_forward,
+    from .internlm2 import (_prepare_mmca_decoder_attention_mask,
+                            internlm2_attn_forward,
+                            internlm2_mmca_attn_forward,
                             internlm2_varlen_attn_forward)
 
     print_log(NO_ATTN_WEIGHTS_MSG, 'current', logging.WARNING)
+    assert not (use_varlen_attn and use_mmca_attn)
+
     for module in model.modules():
         if type(module).__name__ == 'InternLM2Attention':
             if use_varlen_attn:
                 print_log('dispatch internlm2 local attn forward', 'current')
                 module.forward = types.MethodType(
                     internlm2_varlen_attn_forward, module)
+            elif use_mmca_attn:
+                print_log('dispatch internlm2 mmca attn forward', 'current')
+                module.forward = types.MethodType(internlm2_mmca_attn_forward,
+                                                  module)
             else:
                 print_log('dispatch internlm2 attn forward', 'current')
                 module.forward = types.MethodType(internlm2_attn_forward,
                                                   module)
+
+        if type(module).__name__ == 'InternLM2Model' and use_mmca_attn:
+            print_log(
+                'dispatch internlm2 `_prepare_mmca_decoder_attention_mask`',
+                'current')
+            module._prepare_decoder_attention_mask = types.MethodType(
+                _prepare_mmca_decoder_attention_mask, module)
 
 
 def dispatch_internlm_rmsnorm_forward(model):
@@ -276,10 +291,10 @@ def replace_mistral_rote(model):
     traverse(model)
 
 
-def dispatch_modules(model, use_varlen_attn=False):
+def dispatch_modules(model, use_varlen_attn=False, use_mmca_attn=False):
     model_name = model.__class__.__name__.lower()
     if 'internlm2' in model_name:
-        dispatch_internlm2_attn_forward(model, use_varlen_attn)
+        dispatch_internlm2_attn_forward(model, use_varlen_attn, use_mmca_attn)
         dispatch_internlm2_rmsnorm_forward(model)
         replace_internlm2_rote(model)
     elif 'internlm' in model_name:

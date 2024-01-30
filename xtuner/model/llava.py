@@ -26,16 +26,18 @@ class LLaVAModel(BaseModel):
                  projector_depth=2,
                  llm_lora=None,
                  visual_encoder_lora=None,
-                 use_activation_checkpointing=True):
+                 use_activation_checkpointing=True,
+                 use_mmca_attn=False):
         super().__init__()
         self.freeze_llm = freeze_llm
         self.freeze_visual_encoder = freeze_visual_encoder
+        self.use_mmca_attn = use_mmca_attn
         with LoadWoInit():
             self.llm = self._build_from_cfg_or_module(llm)
             self.visual_encoder = self._build_from_cfg_or_module(
                 visual_encoder)
         self.llm.config.use_cache = False
-        dispatch_modules(self.llm)
+        dispatch_modules(self.llm, use_mmca_attn=self.use_mmca_attn)
 
         projector_config = ProjectorConfig(
             visual_hidden_size=self.visual_encoder.config.hidden_size,
@@ -173,7 +175,8 @@ class LLaVAModel(BaseModel):
             pixel_values = self.projector(
                 visual_outputs.hidden_states[self.visual_select_layer][:, 1:])
             data['pixel_values'] = pixel_values
-            data = prepare_inputs_labels_for_multimodal(llm=self.llm, **data)
+            data = prepare_inputs_labels_for_multimodal(
+                llm=self.llm, use_mmca_attn=self.use_mmca_attn, **data)
 
         if mode == 'loss':
             return self.compute_loss(data, data_samples)
