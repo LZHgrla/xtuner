@@ -102,6 +102,7 @@ def dispatch_internlm2_attn_forward(model, use_varlen_attn, use_mmca_attn):
     from .internlm2 import (_prepare_mmca_decoder_attention_mask,
                             internlm2_attn_forward,
                             internlm2_mmca_attn_forward,
+                            prepare_inputs_for_mmca_generation,
                             internlm2_varlen_attn_forward)
 
     print_log(NO_ATTN_WEIGHTS_MSG, 'current', logging.WARNING)
@@ -128,6 +129,13 @@ def dispatch_internlm2_attn_forward(model, use_varlen_attn, use_mmca_attn):
                 'current')
             module._prepare_decoder_attention_mask = types.MethodType(
                 _prepare_mmca_decoder_attention_mask, module)
+        
+        if type(module).__name__ == 'InternLM2ForCausalLM' and use_mmca_attn:
+            print_log(
+                'dispatch internlm2 `prepare_inputs_for_generation`',
+                'current')
+            module.prepare_inputs_for_generation = types.MethodType(
+                prepare_inputs_for_mmca_generation, module)
 
 
 def dispatch_internlm_rmsnorm_forward(model):

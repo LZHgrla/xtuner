@@ -71,21 +71,12 @@ def rotate_half(x):
     x2 = x[..., x.shape[-1] // 2:]
     return torch.cat((-x2, x1), dim=-1)
 
-
-def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
-    cos = cos.unsqueeze(0).unsqueeze(0).expand(len(position_ids), -1, -1, -1)
-    sin = sin.unsqueeze(0).unsqueeze(0).expand(len(position_ids), -1, -1, -1)
-    # print(q.shape, cos.shape, rotate_half(q).shape)
-    if q.size(2) == 1:
-        q_embed = (q * cos[:, :, -1, :]) + (rotate_half(q) * sin[:, :, -1, :])
-    else:
-        q_embed = (q * cos) + (rotate_half(q) * sin)
-
-    if k.size(2) == 1:
-        k_embed = (k * cos[:, :, -1, :]) + (rotate_half(k) * sin[:, :, -1, :])
-    else:
-        k_embed = (k * cos) + (rotate_half(k) * sin)
-
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+    """Applies Rotary Position Embedding to the query and key tensors."""
+    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
+    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
 
 
@@ -562,3 +553,44 @@ def _prepare_mmca_decoder_attention_mask(self, attention_mask, input_shape,
                                        combined_attention_mask)
 
     return combined_attention_mask
+
+
+def prepare_inputs_for_mmca_generation(
+    self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
+):
+    if past_key_values is not None:
+        past_length = past_key_values[0][0].shape[2]
+
+        # Some generation methods already pass only the last input ID
+        if input_ids.shape[1] > past_length:
+            remove_prefix_length = past_length
+        else:
+            # Default to old behavior: keep only final ID
+            remove_prefix_length = input_ids.shape[1] - 1
+
+        input_ids = input_ids[:, remove_prefix_length:]
+
+    position_ids = kwargs.get("position_ids", None)
+    if attention_mask is not None and position_ids is None:
+        # create position_ids on the fly for batch generation
+        # use bool() before long()
+        position_ids = attention_mask.bool().long().cumsum(-1) - 1
+        position_ids.masked_fill_(attention_mask == 0, 1)
+        if past_key_values:
+            position_ids = position_ids[:, -input_ids.shape[1] :]
+
+    # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
+    if inputs_embeds is not None and past_key_values is None:
+        model_inputs = {"inputs_embeds": inputs_embeds}
+    else:
+        model_inputs = {"input_ids": input_ids}
+
+    model_inputs.update(
+        {
+            "position_ids": position_ids,
+            "past_key_values": past_key_values,
+            "use_cache": kwargs.get("use_cache"),
+            "attention_mask": attention_mask,
+        }
+    )
+    return model_inputs
