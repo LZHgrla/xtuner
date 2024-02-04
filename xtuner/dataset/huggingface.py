@@ -65,8 +65,8 @@ def add_template_to_dataset(dataset, template_map_fn, map_num_proc):
 
 
 def tokenize_dataset(dataset, tokenizer, max_length, with_image_token,
-                     input_ids_with_output, remove_unused_columns,
-                     map_num_proc):
+                     per_image_length, input_ids_with_output,
+                     remove_unused_columns, map_num_proc):
     assert (tokenizer is not None) and (max_length is not None), \
         f'({tokenizer}, {max_length})'
     if isinstance(tokenizer, dict) or isinstance(
@@ -78,6 +78,7 @@ def tokenize_dataset(dataset, tokenizer, max_length, with_image_token,
             tokenizer=tokenizer,
             max_length=max_length,
             with_image_token=with_image_token,
+            per_image_length=per_image_length,
             input_ids_with_output=input_ids_with_output),
         remove_columns=list(dataset.column_names)
         if remove_unused_columns else None,
@@ -112,6 +113,7 @@ def process(dataset,
             use_varlen_attn=False,
             input_ids_with_output=True,
             with_image_token=False,
+            per_image_length=None,
             map_num_proc=32):
     """Post-process the dataset loaded from the Hugging Face Hub, or a local
     dataset.
@@ -153,6 +155,8 @@ def process(dataset,
         with_image_token: Whether to convert DEFAULT_IMAGE_TOKEN to
             IMAGE_TOKEN_INDEX. Typically set it to True during the training
             of VLM.
+        per_image_length: If provided and `with_image_token` is True, specifies
+            the desired token length for each image in the dataset.
         map_num_proc: Max number of processes when mapping the dataset.
     """
     if use_varlen_attn:
@@ -163,6 +167,9 @@ def process(dataset,
         assert split == 'train' or split is None, \
             ('`split` should be `train` or `None` if `pack_to_max_length` is '
              f'True, but got {split}.')
+
+    if with_image_token:
+        assert per_image_length > 0
 
     dataset = build_origin_dataset(dataset, split)
 
@@ -197,7 +204,8 @@ def process(dataset,
 
     if do_dataset_tokenization:
         dataset = tokenize_dataset(dataset, tokenizer, max_length,
-                                   with_image_token, input_ids_with_output,
+                                   with_image_token, per_image_length,
+                                   input_ids_with_output,
                                    remove_unused_columns, map_num_proc)
     else:
         assert {'input_ids', 'labels'}.issubset(dataset.column_names)
