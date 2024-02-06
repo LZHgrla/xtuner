@@ -28,6 +28,7 @@ class EvaluateChatHook(Hook):
                  prompt_template=None,
                  every_n_iters=None,
                  max_new_tokens=600,
+                 save_eval_output=True,
                  stop_word=None,
                  stop_words=[]):
         self.evaluation_inputs = evaluation_inputs
@@ -65,6 +66,7 @@ class EvaluateChatHook(Hook):
         self.system = system
         self.every_n_iters = every_n_iters
         self.max_new_tokens = max_new_tokens
+        self.save_eval_output = save_eval_output
         self.tokenizer = BUILDER.build(tokenizer)
         if image_processor is not None:
             self.image_processor = BUILDER.build(image_processor)
@@ -87,21 +89,15 @@ class EvaluateChatHook(Hook):
                 StopWordStoppingCriteria(self.tokenizer, word))
 
     def _save_eval_output(self, runner, eval_outputs):
+        cur_iter = 0 if runner.iter == 0 else runner.iter + 1
         save_path = os.path.join(runner.log_dir, 'vis_data',
-                                 f'eval_outputs_iter_{runner.iter}.txt')
+                                 f'eval_outputs_iter_{cur_iter}.txt')
         with open(save_path, 'w') as f:
             for i, output in enumerate(eval_outputs):
                 f.write(f'Eval output {i + 1}:\n{output}\n\n')
 
-    def _eval_images(self,
-                     runner,
-                     model,
-                     device,
-                     max_new_tokens=None,
-                     save_eval_output=False):
-        if save_eval_output:
-            eval_outputs = []
-
+    def _eval_images(self, runner, model, device, max_new_tokens=None):
+        eval_outputs = []
         for sample_image, sample_input in zip(self.evaluation_images,
                                               self.evaluation_inputs):
             image = expand2square(
@@ -147,21 +143,13 @@ class EvaluateChatHook(Hook):
             generation_output = self.tokenizer.decode(generation_output[0])
             runner.logger.info(f'Sample output:\n'
                                f'{inputs + generation_output}\n')
-            if save_eval_output:
-                eval_outputs.append(f'{inputs + generation_output}\n')
+            eval_outputs.append(f'{inputs + generation_output}\n')
 
-        if save_eval_output:
+        if self.save_eval_output:
             self._save_eval_output(runner, eval_outputs)
 
-    def _eval_language(self,
-                       runner,
-                       model,
-                       device,
-                       max_new_tokens=None,
-                       save_eval_output=False):
-        if save_eval_output:
-            eval_outputs = []
-
+    def _eval_language(self, runner, model, device, max_new_tokens=None):
+        eval_outputs = []
         for sample_input in self.evaluation_inputs:
             inputs = (self.system + self.instruction).format(
                 input=sample_input, round=1, **runner.cfg)
@@ -174,16 +162,12 @@ class EvaluateChatHook(Hook):
                 stopping_criteria=self.stop_criteria)
             generation_output = self.tokenizer.decode(generation_output[0])
             runner.logger.info(f'Sample output:\n{generation_output}\n')
-            if save_eval_output:
-                eval_outputs.append(f'{generation_output}\n')
+            eval_outputs.append(f'{generation_output}\n')
 
-        if save_eval_output:
+        if self.save_eval_output:
             self._save_eval_output(runner, eval_outputs)
 
-    def _generate_samples(self,
-                          runner,
-                          max_new_tokens=None,
-                          save_eval_output=False):
+    def _generate_samples(self, runner, max_new_tokens=None):
         if max_new_tokens is None:
             max_new_tokens = self.max_new_tokens
         model = runner.model
@@ -199,11 +183,9 @@ class EvaluateChatHook(Hook):
         model.llm.config.use_cache = True
         model.eval()
         if self.evaluation_images is not None:
-            self._eval_images(runner, model, device, max_new_tokens,
-                              save_eval_output)
+            self._eval_images(runner, model, device, max_new_tokens)
         else:
-            self._eval_language(runner, model, device, max_new_tokens,
-                                save_eval_output)
+            self._eval_language(runner, model, device, max_new_tokens)
 
         # Cast to training mode
         if is_checkpointing:
@@ -222,29 +204,11 @@ class EvaluateChatHook(Hook):
                          outputs=None) -> None:
         if self.every_n_iters is None:
             return
+        if self.every_n_train_iters(
+                runner, self.every_n_iters) or self.is_last_train_iter(runner):
+            runner.logger.info('after_train_iter in EvaluateChatHook.')
+            self._generate_samples(runner)
 
-        save_eval_output = False
-        try:
-            save_ckpt_freq = runner.cfg.default_hooks.checkpoint.interval
-            save_eval_output = self.every_n_train_iters(runner, save_ckpt_freq)
-        except KeyError:
-            pass
-
-        do_chat = (
-            save_eval_output
-            or self.every_n_train_iters(runner, self.every_n_iters))
-        if not do_chat:
-            return
-
-        runner.logger.info('after_train_iter in EvaluateChatHook.')
-        self._generate_samples(runner, save_eval_output=save_eval_output)
-
-    def after_train(self, runner):
-        runner.logger.info('after_train in EvaluateChatHook.')
-        self._generate_samples(runner)
-
-    def after_val(self, runner) -> None:
-        if self.every_n_iters is not None:
-            return
-        runner.logger.info('after_val in EvaluateChatHook.')
-        self._generate_samples(runner)
+    # def after_train(self, runner):
+    #     runner.logger.info('after_train in EvaluateChatHook.')
+    #     self._generate_samples(runner)
