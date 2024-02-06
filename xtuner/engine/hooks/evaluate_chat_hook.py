@@ -74,10 +74,6 @@ class EvaluateChatHook(Hook):
         # default generation config
         self.gen_config = GenerationConfig(
             max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=0.1,
-            top_p=0.75,
-            top_k=40,
             eos_token_id=self.tokenizer.eos_token_id,
             pad_token_id=self.tokenizer.pad_token_id
             if self.tokenizer.pad_token_id is not None else
@@ -208,7 +204,3 @@ class EvaluateChatHook(Hook):
                 runner, self.every_n_iters) or self.is_last_train_iter(runner):
             runner.logger.info('after_train_iter in EvaluateChatHook.')
             self._generate_samples(runner)
-
-    # def after_train(self, runner):
-    #     runner.logger.info('after_train in EvaluateChatHook.')
-    #     self._generate_samples(runner)
