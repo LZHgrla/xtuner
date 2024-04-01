@@ -27,7 +27,7 @@ XTuner 支持使用自定义数据集进行增量预训练，为便于介绍，�
 
 ### Step 1, 导出 config
 
-`xtuner/configs/custom_dataset/sft/` 目录下有所有 XTuner 支持的模型在自定义数据集下执行预训练的模板 config。可以通过 `xtuner list-cfg -p custom_sft` 命令来查看候选 config。下面以  [internlm2_7b_custom_pretrain_e1.py](https://github.com/InternLM/xtuner/blob/main/xtuner/configs/custom_dataset/pretrain/internlm/internlm2_7b_full_custom_pretrain_e1.py) 为例展开介绍。
+`xtuner/configs/custom_dataset/pretrain/` 目录下有所有 XTuner 支持的模型在自定义数据集下执行预训练的模板 config。可以通过 `xtuner list-cfg -p custom_pretrain` 命令来查看候选 config。下面以  [internlm2_7b_custom_pretrain_e1.py](https://github.com/InternLM/xtuner/blob/main/xtuner/configs/custom_dataset/pretrain/internlm/internlm2_7b_full_custom_pretrain_e1.py) 为例展开介绍。
 
 可以通过以下命令将 `internlm2_7b_full_custom_pretrain_e1.py` 导出至当前目录下：
 
