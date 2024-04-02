@@ -14,6 +14,7 @@ from transformers import (AutoModel, AutoModelForCausalLM, AutoTokenizer,
 from transformers.generation.streamers import TextStreamer
 
 from xtuner.dataset.utils import expand2square, load_image
+from xtuner.model.modules import dispatch_modules
 from xtuner.model.utils import prepare_inputs_labels_for_multimodal
 from xtuner.tools.utils import get_stop_criteria
 from xtuner.utils import (DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_INDEX,
@@ -85,6 +86,8 @@ def parse_args():
         '--no-streamer', action='store_true', help='Whether to with streamer')
     parser.add_argument(
         '--lagent', action='store_true', help='Whether to use lagent')
+    parser.add_argument('--mmca', action='store_true')
+
     parser.add_argument(
         '--stop-words', nargs='+', type=str, default=[], help='Stop words')
     parser.add_argument(
@@ -239,6 +242,8 @@ def main():
             args.model_name_or_path,
             trust_remote_code=True,
             encode_special_tokens=True)
+        if args.mmca:
+            dispatch_modules(llm, use_mmca_attn=True)
         print(f'Load LLM from {args.model_name_or_path}')
         if args.adapter is not None:
             llm = PeftModel.from_pretrained(
@@ -302,7 +307,7 @@ def main():
         llm.eval()
 
         if args.image is not None:
-            assert args.images is None
+            assert len(args.images) == 0
             args.images = [args.image]
         pixel_values_list = []
         for image in args.images:
@@ -316,7 +321,8 @@ def main():
             pixel_values = projector(
                 visual_outputs.hidden_states[args.visual_select_layer][:, 1:])
             pixel_values_list.append(pixel_values)
-        pixel_values = torch.cat(pixel_values_list, dim=0)
+        if len(pixel_values_list) > 0:
+            pixel_values = torch.cat(pixel_values_list, dim=0)
         stop_words = args.stop_words
         sep = ''
         if args.prompt_template:
@@ -356,10 +362,14 @@ def main():
                 print('Log: Exit!')
                 exit(0)
 
-            if args.images is not None and n_turn == 0:
-                text = '\n'.join([DEFAULT_IMAGE_TOKEN] * len(args.images) +
-                                 [text])
-
+            if len(args.images) > 0 and n_turn == 0:
+                if len(args.images) == 1:
+                    prefix = DEFAULT_IMAGE_TOKEN + '\n'
+                else:
+                    prefix = ''
+                    for idx in range(len(args.images)):
+                        prefix += f'Image {idx + 1}: {DEFAULT_IMAGE_TOKEN}\n'
+                text = prefix + text
             if args.prompt_template:
                 prompt_text = ''
                 template = PROMPT_TEMPLATE[args.prompt_template]
@@ -397,7 +407,7 @@ def main():
             else:
                 prompt_text = text
             inputs += prompt_text
-            if args.images is None:
+            if len(args.images) == 0:
                 if n_turn == 0:
                     ids = tokenizer.encode(inputs, return_tensors='pt')
                 else:
@@ -470,8 +480,11 @@ def main():
                         ids.append(IMAGE_TOKEN_INDEX)
                 ids = torch.tensor(ids).cuda().unsqueeze(0)
                 mm_inputs = prepare_inputs_labels_for_multimodal(
-                    llm=llm, input_ids=ids, pixel_values=pixel_values)
-
+                    llm=llm,
+                    input_ids=ids,
+                    attention_mask=torch.ones_like(ids, dtype=torch.bool),
+                    pixel_values=pixel_values,
+                    use_mmca_attn=args.mmca)
                 generate_output = llm.generate(
                     **mm_inputs,
                     generation_config=gen_config,

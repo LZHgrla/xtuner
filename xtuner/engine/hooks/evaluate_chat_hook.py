@@ -136,7 +136,10 @@ class EvaluateChatHook(Hook):
             mm_inputs = prepare_inputs_labels_for_multimodal(
                 llm=model.llm,
                 input_ids=input_ids.unsqueeze(0),
-                pixel_values=pixel_values)
+                attention_mask=torch.ones_like(
+                    input_ids.unsqueeze(0), dtype=torch.bool),
+                pixel_values=pixel_values,
+                use_mmca_attn=model.use_mmca_attn)
 
             generation_output = model.generate(
                 **mm_inputs,
