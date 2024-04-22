@@ -23,15 +23,15 @@ llm_name_or_path = '/mnt/petrelfs/share_data/fanqi/meta-llama/Meta-Llama-3-8B-In
 visual_encoder_name_or_path = 'openai/clip-vit-large-patch14-336'
 
 # Data
-data_root = './data/llava_data/'
-data_path = data_root + 'LLaVA-Pretrain/blip_laion_cc_sbu_558k.json'
-image_folder = data_root + 'LLaVA-Pretrain/images'
+data_root = './data/sharegpt4v/'
+data_path = data_root + 'share-captioner_coco_lcs_sam_1246k_1107.json'
+image_folder = data_root + 'data'
 prompt_template = PROMPT_TEMPLATE.llama3_chat
 max_length = int(4096 - (336 / 14)**2)
 
 # Scheduler & Optimizer
-batch_size = 32  # per_device
-accumulative_counts = 1
+batch_size = 16  # per_device
+accumulative_counts = 2
 dataloader_num_workers = 0
 max_epochs = 1
 optim_type = AdamW
@@ -85,7 +85,7 @@ model = dict(
 #######################################################################
 llava_dataset = dict(
     type=LLaVADataset,
-    offline_processed_text_folder='./data/llama3_8b_instruct_pretrain_llava',
+    offline_processed_text_folder='./data/llama3_8b_instruct_pretrain_sharegpt4v',
     data_path=data_path,
     image_folder=image_folder,
     tokenizer=tokenizer,
